@@ -1,13 +1,17 @@
-import 'dart:ui';
-
 import 'package:bubble/bubble.dart';
+import 'package:chatbotkou/firebase_services.dart';
+import 'package:chatbotkou/full_image_screen.dart';
+import 'package:chatbotkou/settings_screen.dart';
+import 'package:chatbotkou/user_model.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:dialogflow_flutter/dialogflowFlutter.dart';
 import 'package:dialogflow_flutter/googleAuth.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:flutter_tts/flutter_tts.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class ChatBotScreen extends StatefulWidget {
   @override
@@ -15,39 +19,59 @@ class ChatBotScreen extends StatefulWidget {
 }
 
 class _ChatBotScreenState extends State<ChatBotScreen> {
+  FirebaseServices services = FirebaseServices();
   final messageInsert = TextEditingController();
-  List<Map> messsages = [];
-  String userGender = "Kadın"; // Bu değeri veritabanınızdan veya API'den alabilirsiniz.
+  bool isAutoSpeakEnabled = true;
+  List<Map<String, dynamic>> messages = []; // Mesajları saklayacağımız liste
+  String userGender = "Kadın";
 
   stt.SpeechToText speech = stt.SpeechToText();
-  bool _isListening = false; // Mikrofonun aktif olup olmadığını kontrol eder
-  String _text = ""; // Sesli girdi sonrası metin
-  FlutterTts flutterTts = FlutterTts(); // Text-to-Speech motoru
+  bool _isListening = false;
+  String _text = "";
+  FlutterTts flutterTts = FlutterTts();
 
   @override
   void initState() {
     super.initState();
     speech = stt.SpeechToText();
     _fetchUserGender();
+    _sendWelcomeMessage();
+    _loadSettings();
+  }
+
+  // Sesli okuma ayarını yükleme
+  _loadSettings() async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    setState(() {
+      isAutoSpeakEnabled = prefs.getBool('isAutoSpeakEnabled') ?? false;
+    });
+  }
+
+  // İlk hoş geldin mesajı
+  void _sendWelcomeMessage() async {
+    String welcomeMessage =
+        "Merhaba Hoş Geldin.\nBen Biyorobot, biyoloji dersinde sana yardımcı olmak için programlandım. Biyoloji dersinde yapmak istediğin aşağıdakilerden hangisidir.\nEğer doğrudan bir şey öğrenmek istiyorsan lütfen yaz. Ben cevaplayabilirim.";
+
+    setState(() {
+      messages.insert(0, {"data": 0, "message": welcomeMessage});
+      if (isAutoSpeakEnabled) {
+        _speak(welcomeMessage);
+      }
+    });
+
+    // Dialogflow'dan yanıt almak
+    response(welcomeMessage);
   }
 
   Future<void> _fetchUserGender() async {
     try {
-      User? user = FirebaseAuth.instance.currentUser;
-
-      if (user != null) {
-        DocumentSnapshot userDoc = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(user.uid)
-            .get();
-
-        if (userDoc.exists) {
+      if (services.user != null) {
+        UserModel user = await services.getUserById(services.user!.uid);
+        if (user != null) {
           setState(() {
-            userGender = userDoc['gender'] ?? "Kadın"; // Varsayılan olarak "Kadın"
+            userGender = user.gender;
           });
         }
-      } else {
-        print("Kullanıcı oturum açmamış.");
       }
     } catch (e) {
       print("Cinsiyet bilgisi alınırken hata oluştu: $e");
@@ -66,14 +90,13 @@ class _ChatBotScreenState extends State<ChatBotScreen> {
         speech.listen(
           onResult: (val) => setState(() {
             _text = val.recognizedWords;
-            print("Alınan metin: $_text"); // Alınan metni yazdır
             if (val.hasConfidenceRating && val.confidence > 0) {
               messageInsert.text = _text;
               _sendMessage(); // Metni Dialogflow'a gönder
             }
           }),
-          localeId: "tr_TR", // Türkçe desteği
-          listenFor: Duration(seconds: 10), // Dinleme süresini uzatmak
+          localeId: "tr_TR",
+          listenFor: Duration(seconds: 10),
         );
       }
     } else {
@@ -85,34 +108,105 @@ class _ChatBotScreenState extends State<ChatBotScreen> {
   }
 
   // Dialogflow'dan yanıt alma fonksiyonu
+  // Dialogflow'dan yanıt alma fonksiyonu
   void response(String query) async {
     try {
       AuthGoogle authGoogle =
           await AuthGoogle(fileJson: "assets/cred.json").build();
       DialogFlow dialogflow =
-          DialogFlow(authGoogle: authGoogle, language: "tr");
+          DialogFlow(authGoogle: authGoogle, language: "tr-TR");
+
       AIResponse aiResponse = await dialogflow.detectIntent(query);
 
-      var messages = aiResponse.getListMessage();
-      if (messages != null && messages.isNotEmpty) {
-        var firstMessage = messages[0];
+      var messagesFromAI = aiResponse.getListMessage();
+
+      if (messagesFromAI != null && messagesFromAI.isNotEmpty) {
+        var firstMessage = messagesFromAI[0];
+
         if (firstMessage != null && firstMessage is Map) {
-          var text = firstMessage["text"];
-          if (text != null && text is Map) {
-            var textList = text["text"];
-            if (textList != null && textList is List && textList.isNotEmpty) {
-              setState(() {
-                messsages
-                    .insert(0, {"data": 0, "message": textList[0].toString()});
-              });
-            } else {
-              print("Error: Unexpected format for 'text' in response.");
+          if (firstMessage.containsKey("payload")) {
+            var payload = firstMessage["payload"];
+
+            if (payload.containsKey("chatbot-flutter")) {
+              var flutterPayload = payload["chatbot-flutter"];
+
+              if (flutterPayload.containsKey("response")) {
+                var response = flutterPayload["response"];
+                String? messageText =
+                    response["text"]; // text opsiyonel olabilir
+
+                // Yeni yapıyı kontrol et
+                if (response.containsKey("title") &&
+                    response.containsKey("subtitle") &&
+                    response.containsKey("image_url")) {
+                  // Yeni yapı için title, subtitle, image_url ekleniyor
+                  String title = response["title"];
+                  String subtitle = response["subtitle"];
+                  String imageUrl = response["image_url"];
+                  String? messageText = response["text"]; // Text opsiyonel
+
+                  var buttons = response["reply_markup"] != null
+                      ? response["reply_markup"]["inline_keyboard"]
+                      : null;
+
+                  setState(() {
+                    messages.insert(0, {
+                      "data": 0,
+                      "title": title,
+                      "subtitle": subtitle,
+                      "image_url": imageUrl,
+                      "message": messageText ??
+                          "", // Text varsa ekliyoruz, yoksa boş string
+                      "buttons": buttons,
+                    });
+                  });
+
+                  if (isAutoSpeakEnabled &&
+                      messageText != null &&
+                      messageText.isNotEmpty) {
+                    _speak(messageText);
+                  }
+                }
+                // Eski yapıyı kontrol et
+                else if (response.containsKey("reply_markup") &&
+                    response["reply_markup"].containsKey("inline_keyboard")) {
+                  var inlineKeyboard =
+                      response["reply_markup"]["inline_keyboard"];
+
+                  setState(() {
+                    messages.insert(0, {
+                      "data": 0,
+                      "message": messageText ?? "", // Text varsa ekliyoruz
+                      "buttons": inlineKeyboard
+                    });
+                  });
+
+                  if (isAutoSpeakEnabled &&
+                      messageText != null &&
+                      messageText.isNotEmpty) {
+                    _speak(messageText);
+                  }
+                }
+                // Eğer buton yoksa, sadece text mesajı ekle
+                else if (messageText != null && messageText.isNotEmpty) {
+                  setState(() {
+                    messages.insert(0, {
+                      "data": 0,
+                      "message": messageText,
+                    });
+                  });
+                }
+
+                _saveMessageToFirestore(messageText ?? "", "bot");
+
+                if (isAutoSpeakEnabled &&
+                    messageText != null &&
+                    messageText.isNotEmpty) {
+                  _speak(messageText);
+                }
+              }
             }
-          } else {
-            print("Error: 'text' is null or not a Map.");
           }
-        } else {
-          print("Error: First message is null or not a Map.");
         }
       } else {
         print("Error: No messages received or getListMessage() returned null.");
@@ -127,18 +221,41 @@ class _ChatBotScreenState extends State<ChatBotScreen> {
       print("boş mesaj");
     } else {
       setState(() {
-        messsages.insert(0, {"data": 1, "message": messageInsert.text});
+        messages.insert(0, {"data": 1, "message": messageInsert.text});
       });
+      _saveMessageToFirestore(messageInsert.text, "user");
       response(messageInsert.text);
       messageInsert.clear();
     }
   }
 
+  // Firestore'a mesajları kaydetme
+  void _saveMessageToFirestore(String message, String sender) async {
+    try {
+      User? user = FirebaseAuth.instance.currentUser;
+      if (user != null) {
+        await FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid)
+            .collection('messages')
+            .add({
+          'message': message,
+          'sender': sender,
+          'timestamp': FieldValue.serverTimestamp(),
+        });
+      }
+    } catch (e) {
+      print("Mesaj kaydedilirken hata oluştu: $e");
+    }
+  }
+
   // Text-to-Speech fonksiyonu
   void _speak(String text) async {
-    await flutterTts.setLanguage("tr-TR"); // Türkçe dil ayarı
-    await flutterTts.setPitch(1.0); // Ses tonu ayarı
-    await flutterTts.speak(text); // Metni okutma
+    if (isAutoSpeakEnabled && text.isNotEmpty) {
+      await flutterTts.setLanguage("tr-TR");
+      await flutterTts.setPitch(1.0);
+      await flutterTts.speak(text);
+    }
   }
 
   @override
@@ -155,6 +272,19 @@ class _ChatBotScreenState extends State<ChatBotScreen> {
         ),
         elevation: 10,
         title: Text("Dialog Flow Chatbot"),
+        actions: [
+          IconButton(
+            icon: Icon(Icons.settings),
+            onPressed: () async {
+              await Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => SettingsScreen()),
+              );
+              // Settings ekranından dönüldükten sonra ayarları yeniden yükle
+              _loadSettings();
+            },
+          ),
+        ],
       ),
       body: Container(
         child: Column(
@@ -162,17 +292,24 @@ class _ChatBotScreenState extends State<ChatBotScreen> {
             Flexible(
               child: ListView.builder(
                 reverse: true,
-                itemCount: messsages.length,
-                itemBuilder: (context, index) => GestureDetector(
-                  onTap: () {
-                    if (messsages[index]["data"] == 0) {
-                      _speak(messsages[index]["message"].toString());
-                    }
-                  },
-                  child: chat(
-                      messsages[index]["message"].toString(),
-                      messsages[index]["data"]),
-                ),
+                itemCount: messages.length,
+                itemBuilder: (context, index) {
+                  if (messages[index]["buttons"] != null) {
+                    return _buildMessageWithButtons(messages[index]);
+                  }
+                  return GestureDetector(
+                    onTap: () {
+                      if (messages[index]["data"] == 0) {
+                        _speak(messages[index]["message"].toString());
+                      }
+                    },
+                    child: chat(
+                      messages[index]["message"].toString(),
+                      messages[index]["data"],
+                      messages[index]["image"],
+                    ),
+                  );
+                },
               ),
             ),
             Divider(
@@ -221,45 +358,353 @@ class _ChatBotScreenState extends State<ChatBotScreen> {
     );
   }
 
-  Widget chat(String message, int data) {
+  Widget _buildMessageWithButtons(Map<String, dynamic> message) {
+    if (message.containsKey("title") &&
+        message.containsKey("subtitle") &&
+        message.containsKey("image_url")) {
+      String title = message["title"];
+      String subtitle = message["subtitle"];
+      String imageUrl = message["image_url"];
+      String? messageText = message["message"]; // text varsa ekleyeceğiz
+      var buttons = message["buttons"];
+
+      // Sesli okuma fonksiyonu çağrısı
+      if (!message.containsKey('hasBeenSpoken') ||
+          message['hasBeenSpoken'] == false) {
+        if (isAutoSpeakEnabled) {
+          _speak("$title. $subtitle ${messageText ?? ''}");
+        }
+        message['hasBeenSpoken'] = true;
+      }
+
+      return Padding(
+        padding: const EdgeInsets.all(8.0),
+        child: Bubble(
+          radius: Radius.circular(10.0),
+          color: Colors.blue,
+          elevation: 0.0,
+          alignment: Alignment.topLeft,
+          nip: BubbleNip.leftBottom,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  IconButton(
+                    icon: Icon(Icons.volume_up, color: Colors.white),
+                    onPressed: () {
+                      _speak("$title. $subtitle ${messageText ?? ''}");
+                    },
+                  ),
+                ],
+              ),
+              if (imageUrl != null && imageUrl.isNotEmpty)
+                GestureDetector(
+                  onTap: () {
+                    // Resme tıklanınca FullImageScreen'e yönlendirilir
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => FullImageScreen(
+                          imageUrl: imageUrl,
+                          title: title, // Başlık bilgisi
+                          subtitle: subtitle, // Alt başlık bilgisi
+                          messageText : messageText,
+                        ),
+                      ),
+                    );
+                  },
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(
+                        15.0), // Baloncuğun köşelerine uyar
+                    child: Image.network(
+                      imageUrl,
+                      fit: BoxFit.contain, // Resmi baloncuğa tam sığdırır
+                      height: MediaQuery.of(context).size.height * 0.3,
+                      width: MediaQuery.of(context).size.width * 0.9,
+                    ),
+                  ),
+                ),
+              if (imageUrl != null && imageUrl.isNotEmpty) SizedBox(height: 10),
+              // Title
+              if (title != null && title.isNotEmpty)
+                Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                ),
+              if (title != null && title.isNotEmpty) SizedBox(height: 5),
+              // Subtitle
+              if (subtitle != null && subtitle.isNotEmpty)
+                Text(
+                  subtitle,
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontStyle: FontStyle.italic,
+                    color: Colors.white70,
+                  ),
+                ),
+              if (subtitle != null && subtitle.isNotEmpty) SizedBox(height: 10),
+              // Text (message varsa gösterilecek)
+              if (messageText != null && messageText.isNotEmpty)
+                Text(
+                  messageText,
+                  style: TextStyle(
+                    fontSize: 16,
+                    color: Colors.white,
+                  ),
+                ),
+              if (messageText != null && messageText.isNotEmpty)
+                SizedBox(height: 10),
+              // Resim (tam ekran açılacak şekilde GestureDetector ile sarıldı)
+
+              // Buttons (URL açılacak)
+              if (buttons != null)
+                Wrap(
+                  spacing: 8.0, // Butonlar arasındaki yatay boşluk
+                  runSpacing: 4.0, // Satırlar arasındaki dikey boşluk
+                  children: (buttons as List).map<Widget>((buttonRow) {
+                    return Row(
+                      mainAxisSize: MainAxisSize.max,
+                      children: buttonRow.map<Widget>((button) {
+                        return Padding(
+                          padding: const EdgeInsets.all(4.0),
+                          child: button["callback_data"] == "launch"
+                              ? GestureDetector(
+                                  onTap: () {
+                                    if (button["text"]
+                                        .toString()
+                                        .startsWith("http")) {
+                                      _launchUrl(button["text"]);
+                                    }
+                                  },
+                                  child: Row(
+                                    children: [
+                                      if (button["text"] != null &&
+                                          button["text"].isNotEmpty)
+                                        SizedBox(
+                                          width: MediaQuery.of(context)
+                                                  .size
+                                                  .width *
+                                              0.78,
+                                          child: Text(
+                                            button["text"],
+                                            style:
+                                                TextStyle(color: Colors.white),
+                                            maxLines:
+                                                2, // Maksimum satır sayısı
+                                            overflow: TextOverflow
+                                                .ellipsis, // Taşma durumunda "..." ekler
+                                          ),
+                                        ),
+                                      if (button["text"] != null &&
+                                          button["text"].isNotEmpty)
+                                        Icon(
+                                          Icons.arrow_forward_ios,
+                                          color: Colors.white,
+                                        ),
+                                    ],
+                                  ),
+                                )
+                              : ConstrainedBox(
+                                  constraints: BoxConstraints(
+                                    minWidth: 100, // Minimum genişlik
+                                    maxWidth:
+                                        MediaQuery.of(context).size.width *
+                                            0.85, // Maksimum genişlik
+                                  ),
+                                  child: ElevatedButton(
+                                    style: ElevatedButton.styleFrom(
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius:
+                                            BorderRadius.circular(20.0),
+                                      ),
+                                    ),
+                                    onPressed: () {
+                                      _handleButtonPress(
+                                          button["callback_data"]);
+                                    },
+                                    child: Text(
+                                      button["text"],
+                                      style: TextStyle(color: Colors.black),
+                                      textAlign: TextAlign.start,
+                                      maxLines: 10, // Maksimum 2 satır
+                                      overflow: TextOverflow
+                                          .ellipsis, // Uzun metinlerde taşma yerine "..." gösterir
+                                    ),
+                                  ),
+                                ),
+                        );
+                      }).toList(),
+                    );
+                  }).toList(),
+                ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // Eski yapı çalışmaya devam eder (Text ve image_url yoksa)
+    return Padding(
+      padding: const EdgeInsets.all(8.0),
+      child: Bubble(
+        radius: Radius.circular(10.0),
+        color: Colors.blue,
+        elevation: 0.0,
+        alignment: Alignment.topLeft,
+        nip: BubbleNip.leftBottom,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            CircleAvatar(
+              backgroundImage: AssetImage("assets/bot.png"),
+            ),
+            SizedBox(width: 10.0),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    message["message"],
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
+                  SizedBox(height: 10.0),
+                  Wrap(
+                    children:
+                        (message["buttons"] as List).map<Widget>((buttonRow) {
+                      return Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: buttonRow.map<Widget>((button) {
+                          return Padding(
+                            padding: const EdgeInsets.all(4.0),
+                            child: ElevatedButton(
+                              style: ElevatedButton.styleFrom(
+                                shadowColor: Colors.black,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(20.0),
+                                ),
+                              ),
+                              onPressed: () {
+                                _handleButtonPress(button["callback_data"]);
+                              },
+                              child: Text(
+                                button["text"],
+                                style: TextStyle(color: Colors.black),
+                              ),
+                            ),
+                          );
+                        }).toList(),
+                      );
+                    }).toList(),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+// URL açma fonksiyonu
+  Future<void> _launchUrl(String url) async {
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      url = 'https://$url'; // Default olarak https ekleyin
+    }
+
+    final Uri uri = Uri.parse(url);
+
+    if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not launch $url')),
+      );
+    }
+  }
+
+  void _handleButtonPress(String callbackData) {
+    response(callbackData);
+  }
+
+  // Mesajların gösterileceği widget
+  Widget chat(String message, int data, String? imageUrl) {
     String avatarImage;
     if (data == 0) {
       avatarImage = "assets/bot.png";
     } else {
-      // Kullanıcı cinsiyetine göre avatarı belirleme
       avatarImage =
           userGender == "Erkek" ? "assets/menuser.png" : "assets/womanuser.png";
     }
 
     return Padding(
       padding: EdgeInsets.all(10.0),
-      child: Bubble(
-        radius: Radius.circular(15.0),
-        color: data == 0 ? Colors.blue : Colors.orangeAccent,
-        elevation: 0.0,
-        alignment: data == 0 ? Alignment.topLeft : Alignment.topRight,
-        nip: data == 0 ? BubbleNip.leftBottom : BubbleNip.rightTop,
-        child: Padding(
-          padding: EdgeInsets.all(2.0),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              CircleAvatar(
-                backgroundImage: AssetImage(avatarImage),
+      child: Column(
+        crossAxisAlignment:
+            data == 0 ? CrossAxisAlignment.start : CrossAxisAlignment.end,
+        children: [
+          Bubble(
+            radius: Radius.circular(15.0),
+            color: data == 0 ? Colors.blue : Colors.orangeAccent,
+            elevation: 0.0,
+            alignment: data == 0 ? Alignment.topLeft : Alignment.topRight,
+            nip: data == 0 ? BubbleNip.leftBottom : BubbleNip.rightTop,
+            child: Padding(
+              padding: EdgeInsets.all(2.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      CircleAvatar(
+                        backgroundImage: AssetImage(avatarImage),
+                      ),
+                      SizedBox(
+                        width: 10.0,
+                      ),
+                      Flexible(
+                        child: Text(
+                          message,
+                          style: TextStyle(
+                              color: Colors.white, fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (imageUrl != null)
+                    GestureDetector(
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) =>
+                                FullImageScreen(imageUrl: imageUrl),
+                          ),
+                        );
+                      },
+                      child: Padding(
+                        padding: EdgeInsets.only(top: 5.0),
+                        child: Image.network(
+                          imageUrl,
+                          fit: BoxFit.fill,
+                          height: MediaQuery.of(context).size.height * 0.2,
+                          width: MediaQuery.of(context).size.width * 0.9,
+                        ),
+                      ),
+                    ),
+                ],
               ),
-              SizedBox(
-                width: 10.0,
-              ),
-              Flexible(
-                child: Text(
-                  message,
-                  style: TextStyle(
-                      color: Colors.white, fontWeight: FontWeight.bold),
-                ),
-              )
-            ],
+            ),
           ),
-        ),
+        ],
       ),
     );
   }

@@ -39,6 +39,10 @@ dependencies:
   clipboard:
   speech_to_text:
   flutter_tts:
+  shared_preferences:
+  url_launcher:
+  auto_size_text:
+  photo_view:
 
 
   # The following adds the Cupertino Icons font to your application.

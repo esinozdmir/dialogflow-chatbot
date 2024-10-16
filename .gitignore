@@ -42,3 +42,14 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+#assets
+/assets/cred.json
+/assets/cred1.json
+/assets/cred2.json
+/assets/cred3.json
+/assets/cred25.json
+
+#firebase
+
+/lib/firebase_options.dart

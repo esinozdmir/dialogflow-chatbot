@@ -1,4 +1,5 @@
 import 'package:chatbotkou/chat_bot_screen.dart';
+import 'package:chatbotkou/colors.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
@@ -31,6 +32,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         'username': _usernameController.text,
         'email': _emailController.text,
         'gender': _selectedGender,
+        'role' : 'user',
       });
 
       // Başarılı kayıt sonrası yönlendirme
@@ -50,9 +52,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
       appBar: AppBar(
         title: Text('Kayıt Ol'),
         centerTitle: true,
-        backgroundColor: const Color.fromARGB(255, 229, 222, 204),
+        backgroundColor: AppColors.background,
       ),
-      backgroundColor: const Color.fromARGB(255, 229, 222, 204),
+      backgroundColor: AppColors.background,
       body: Center(
         child: Padding(
           padding: EdgeInsets.all(16.0),
@@ -154,7 +156,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 ElevatedButton(
                   onPressed: _register, // Register button triggers Firebase registration
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color.fromARGB(255, 141, 151, 114),
+                    backgroundColor: AppColors.appBar,
                     padding: EdgeInsets.symmetric(horizontal: 30, vertical: 15), // İçerik boşluğu
                     textStyle: TextStyle(
                       color: Colors.black,

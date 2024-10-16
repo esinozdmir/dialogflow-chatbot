@@ -1,4 +1,6 @@
 import 'package:chatbotkou/chat_bot_screen.dart';
+import 'package:chatbotkou/colors.dart';
+import 'package:chatbotkou/main.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
@@ -21,7 +23,7 @@ class _LoginScreenState extends State<LoginScreen> {
       );
       Navigator.pushReplacement(
         context,
-        MaterialPageRoute(builder: (context) => ChatBotScreen()),
+        MaterialPageRoute(builder: (context) => NavigatePage()),
       );
     } catch (e) {
       print(e); // Hataları konsola yazdırıyoruz
@@ -119,7 +121,7 @@ class _LoginScreenState extends State<LoginScreen> {
               ElevatedButton(
                 onPressed: _login,
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color.fromARGB(255, 141, 151, 114),
+                  backgroundColor: AppColors.appBar,
                   padding: EdgeInsets.symmetric(horizontal: 30, vertical: 15), // İçerik boşluğu
                   textStyle: TextStyle(
                     color: Colors.black,
