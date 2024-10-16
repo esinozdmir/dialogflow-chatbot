@@ -34,12 +34,35 @@ class UserMessagesScreen extends StatelessWidget {
           return ListView.builder(
             itemCount: messages.length,
             itemBuilder: (context, index) {
-              var messageData = messages[index];
+              var messageData = messages[index].data() as Map<String, dynamic>?;
+
+              // Eğer messageData null ise veya beklenen alanlar yoksa varsayılan değerler kullan
+              String userResponse = messageData != null && messageData.containsKey('user_response')
+                  ? messageData['user_response']
+                  : "Yanıt bulunamadı";
+              String botResponse = messageData != null && messageData.containsKey('bot_response')
+                  ? messageData['bot_response']
+                  : "Bot yanıtı bulunamadı";
+              String selectedOption = messageData != null && messageData.containsKey('selected_option')
+                  ? messageData['selected_option']
+                  : "Seçenek bulunamadı";
+              String timestamp = messageData != null && messageData.containsKey('timestamp')
+                  ? (messageData['timestamp'] as Timestamp).toDate().toString()
+                  : "Tarih bulunamadı";
+              String sender = messageData != null && messageData.containsKey('sender')
+                  ? messageData['sender']
+                  : "Kullanıcı bilinmiyor";
+
               return ListTile(
-                title: Text("Mesaj: ${messageData['message']}"),
-                subtitle: Text(
-                  "Tarih: ${messageData['timestamp'].toDate()}",
-                  style: TextStyle(fontSize: 12),
+                title: Text("Kullanıcı: $sender"),
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text("Kullanıcı Yanıtı: $userResponse"),
+                    Text("Bot Yanıtı: $botResponse"),
+                    Text("Seçilen Şık: $selectedOption"),
+                    Text("Tarih: $timestamp"),
+                  ],
                 ),
               );
             },

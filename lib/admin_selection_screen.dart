@@ -1,6 +1,7 @@
 import 'package:chatbotkou/admin_panel.dart';
 import 'package:chatbotkou/chat_bot_screen.dart';
 import 'package:chatbotkou/colors.dart';
+import 'package:chatbotkou/statistics_screen.dart';
 import 'package:flutter/material.dart';
 
 class AdminSelectionScreen extends StatelessWidget {
@@ -23,8 +24,8 @@ class AdminSelectionScreen extends StatelessWidget {
         automaticallyImplyLeading: false,
       ),
       body: Center(
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceAround,
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
           children: [
             ElevatedButton(
                 onPressed: () {
@@ -79,7 +80,37 @@ class AdminSelectionScreen extends StatelessWidget {
                 child: Text(
                   "Chatbot",
                   style: TextStyle(color: Colors.black),
+                )),
+
+
+                ElevatedButton(
+                onPressed: () {
+                  Navigator.push(context,
+                      MaterialPageRoute(builder: (context) => StatisticsScreen()));
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.appBar,
+                  padding: EdgeInsets.symmetric(
+                      horizontal: 30, vertical: 15), // İçerik boşluğu
+                  textStyle: TextStyle(
+                    color: Colors.black,
+                    fontSize: 18, // Yazı tipi boyutu
+                    fontWeight: FontWeight.bold, // Yazı tipi kalınlığı
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(30),
+                    side: BorderSide(
+                      color: Colors.black, // Çerçeve rengi
+                      width: 2, // Çerçeve kalınlığı
+                    ), // Kenarların yuvarlatılması
+                  ),
+                  elevation: 10, // Gölge yüksekliği
+                ),
+                child: Text(
+                  "İstatistik",
+                  style: TextStyle(color: Colors.black),
                 ))
+                
           ],
         ),
       ),

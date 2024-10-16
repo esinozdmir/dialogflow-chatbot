@@ -52,6 +52,13 @@ class _ChatBotScreenState extends State<ChatBotScreen> {
     String welcomeMessage =
         "Merhaba Hoş Geldin.\nBen Biyorobot, biyoloji dersinde sana yardımcı olmak için programlandım. Biyoloji dersinde yapmak istediğin aşağıdakilerden hangisidir.\nEğer doğrudan bir şey öğrenmek istiyorsan lütfen yaz. Ben cevaplayabilirim.";
 
+    // Firestore'a hoş geldin mesajını kaydet
+    String? documentId = await _saveMessageToFirestore({
+      'message': welcomeMessage,
+      'sender': 'bot',
+      'timestamp': FieldValue.serverTimestamp(),
+    });
+
     setState(() {
       messages.insert(0, {"data": 0, "message": welcomeMessage});
       if (isAutoSpeakEnabled) {
@@ -59,8 +66,10 @@ class _ChatBotScreenState extends State<ChatBotScreen> {
       }
     });
 
-    // Dialogflow'dan yanıt almak
-    response(welcomeMessage);
+    if (documentId != null) {
+      // Hoş geldin mesajına uygun yanıt almak için Dialogflow'a gönder
+      response(welcomeMessage, documentId);
+    }
   }
 
   Future<void> _fetchUserGender() async {
@@ -109,7 +118,7 @@ class _ChatBotScreenState extends State<ChatBotScreen> {
 
   // Dialogflow'dan yanıt alma fonksiyonu
   // Dialogflow'dan yanıt alma fonksiyonu
-  void response(String query) async {
+  void response(String query, String documentId) async {
     try {
       AuthGoogle authGoogle =
           await AuthGoogle(fileJson: "assets/cred.json").build();
@@ -134,6 +143,7 @@ class _ChatBotScreenState extends State<ChatBotScreen> {
                 var response = flutterPayload["response"];
                 String? messageText =
                     response["text"]; // text opsiyonel olabilir
+                    
 
                 // Yeni yapıyı kontrol et
                 if (response.containsKey("title") &&
@@ -158,7 +168,20 @@ class _ChatBotScreenState extends State<ChatBotScreen> {
                       "message": messageText ??
                           "", // Text varsa ekliyoruz, yoksa boş string
                       "buttons": buttons,
+                      "documentId": documentId, // documentId ekleniyor
                     });
+                  });
+
+                  // Firestore'da aynı documentId'yi güncelleme
+                  await FirebaseFirestore.instance
+                      .collection('users')
+                      .doc(FirebaseAuth.instance.currentUser!.uid)
+                      .collection('messages')
+                      .doc(documentId)
+                      .update({
+                    'bot_message': messageText,
+                    'buttons': buttons,
+                    'timestamp': FieldValue.serverTimestamp(),
                   });
 
                   if (isAutoSpeakEnabled &&
@@ -193,11 +216,21 @@ class _ChatBotScreenState extends State<ChatBotScreen> {
                     messages.insert(0, {
                       "data": 0,
                       "message": messageText,
+                      "documentId": documentId, // documentId ekleniyor
                     });
                   });
-                }
 
-                _saveMessageToFirestore(messageText ?? "", "bot");
+                  // Firestore'da sadece bot mesajını güncelle
+                  await FirebaseFirestore.instance
+                      .collection('users')
+                      .doc(FirebaseAuth.instance.currentUser!.uid)
+                      .collection('messages')
+                      .doc(documentId)
+                      .update({
+                    'bot_message': messageText,
+                    'timestamp': FieldValue.serverTimestamp(),
+                  });
+                }
 
                 if (isAutoSpeakEnabled &&
                     messageText != null &&
@@ -216,38 +249,83 @@ class _ChatBotScreenState extends State<ChatBotScreen> {
     }
   }
 
-  void _sendMessage() {
-    if (messageInsert.text.isEmpty) {
-      print("boş mesaj");
-    } else {
-      setState(() {
-        messages.insert(0, {"data": 1, "message": messageInsert.text});
-      });
-      _saveMessageToFirestore(messageInsert.text, "user");
-      response(messageInsert.text);
-      messageInsert.clear();
-    }
-  }
+  Future<String?> _saveMessageToFirestore(Map<String, dynamic> messageData) async {
+  try {
+    User? user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      // Mesaj verilerini Firestore'a kaydediyoruz ve document ID alıyoruz
+      DocumentReference docRef = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .collection('messages')
+          .add(messageData); // Map olarak mesaj verilerini gönderiyoruz
 
-  // Firestore'a mesajları kaydetme
-  void _saveMessageToFirestore(String message, String sender) async {
-    try {
-      User? user = FirebaseAuth.instance.currentUser;
-      if (user != null) {
-        await FirebaseFirestore.instance
-            .collection('users')
-            .doc(user.uid)
-            .collection('messages')
-            .add({
-          'message': message,
-          'sender': sender,
-          'timestamp': FieldValue.serverTimestamp(),
-        });
-      }
-    } catch (e) {
-      print("Mesaj kaydedilirken hata oluştu: $e");
+      return docRef.id; // documentId döndürüyoruz
+    }
+  } catch (e) {
+    print("Mesaj kaydedilirken hata oluştu: $e");
+  }
+  return null; // Hata durumunda null döndürüyoruz
+}
+
+
+  Future<String?> _getUserDisplayName(String uid) async {
+  try {
+    // Firestore'da kullanıcı bilgilerini al
+    DocumentSnapshot userDoc = await FirebaseFirestore.instance
+        .collection('users')
+        .doc(uid)
+        .get();
+
+    if (userDoc.exists) {
+      Map<String, dynamic>? userData = userDoc.data() as Map<String, dynamic>?;
+      return userData?['username']; // 'username' alanını döndür
+    }
+  } catch (e) {
+    print("Kullanıcı adı alınırken hata: $e");
+  }
+  return "Bilinmeyen Kullanıcı"; // Hata durumunda veya username yoksa bu değeri döndür
+}
+
+void _sendMessage() async {
+  if (messageInsert.text.isEmpty) {
+    print("boş mesaj");
+  } else {
+    // FirebaseAuth kullanarak mevcut kullanıcıyı al
+    User? user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      // Kullanıcı adını Firestore'dan alıyoruz
+      String username = await _getUserDisplayName(user.uid) ?? "Bilinmeyen Kullanıcı";
+
+      // Kullanıcının mesajını kaydediyoruz ve mesaj ID'sini alıyoruz
+      String userMessage = messageInsert.text;
+      _saveMessageToFirestore({
+        'user_response': userMessage, // Kullanıcı cevabı
+        'bot_response': '', // Bot cevabı daha sonra güncellenecek
+        'selected_option': '', // Seçilen şık
+        'sender': username, // Kullanıcı adı ekleniyor
+        'timestamp': FieldValue.serverTimestamp(),
+      }).then((documentId) {
+        if (documentId != null) {
+          setState(() {
+            messages.insert(0, {
+              'data': 1,
+              'message': userMessage,
+              'documentId': documentId,
+              'username': username, // UI'de de kullanıcının adı gösterilebilir
+            });
+          });
+
+          // Botun yanıtını al ve dokümanı güncelle
+          response(userMessage, documentId);
+          messageInsert.clear();
+        }
+      });
     }
   }
+}
+
+
 
   // Text-to-Speech fonksiyonu
   void _speak(String text) async {
@@ -294,8 +372,10 @@ class _ChatBotScreenState extends State<ChatBotScreen> {
                 reverse: true,
                 itemCount: messages.length,
                 itemBuilder: (context, index) {
+                  String documentId = messages[index]['documentId'] ?? '';
                   if (messages[index]["buttons"] != null) {
-                    return _buildMessageWithButtons(messages[index]);
+                    return _buildMessageWithButtons(
+                        messages[index], documentId);
                   }
                   return GestureDetector(
                     onTap: () {
@@ -358,7 +438,8 @@ class _ChatBotScreenState extends State<ChatBotScreen> {
     );
   }
 
-  Widget _buildMessageWithButtons(Map<String, dynamic> message) {
+  Widget _buildMessageWithButtons(
+      Map<String, dynamic> message, String documentId) {
     if (message.containsKey("title") &&
         message.containsKey("subtitle") &&
         message.containsKey("image_url")) {
@@ -410,7 +491,7 @@ class _ChatBotScreenState extends State<ChatBotScreen> {
                           imageUrl: imageUrl,
                           title: title, // Başlık bilgisi
                           subtitle: subtitle, // Alt başlık bilgisi
-                          messageText : messageText,
+                          messageText: messageText,
                         ),
                       ),
                     );
@@ -526,7 +607,7 @@ class _ChatBotScreenState extends State<ChatBotScreen> {
                                     ),
                                     onPressed: () {
                                       _handleButtonPress(
-                                          button["callback_data"]);
+                                          button["callback_data"], documentId);
                                     },
                                     child: Text(
                                       button["text"],
@@ -594,7 +675,8 @@ class _ChatBotScreenState extends State<ChatBotScreen> {
                                 ),
                               ),
                               onPressed: () {
-                                _handleButtonPress(button["callback_data"]);
+                                _handleButtonPress(
+                                    button["callback_data"], documentId);
                               },
                               child: Text(
                                 button["text"],
@@ -630,9 +712,67 @@ class _ChatBotScreenState extends State<ChatBotScreen> {
     }
   }
 
-  void _handleButtonPress(String callbackData) {
-    response(callbackData);
+  void _handleButtonPress(String callbackData, String documentId) {
+  // callbackData'yı küçük harfe çevirerek büyük/küçük harf farkını ortadan kaldırıyoruz
+  String normalizedData = callbackData.toLowerCase(); 
+
+  // Eğer callback_data bir cevap (örn: doğru/yanlış) ise mevcut belgeyi güncelle
+  if (normalizedData == 'doğru' || normalizedData == 'yanlış'|| normalizedData == 'Doğru' || normalizedData == 'Yanlış') {
+    FirebaseFirestore.instance
+        .collection('users')
+        .doc(FirebaseAuth.instance.currentUser!.uid)
+        .collection('messages')
+        .doc(documentId)
+        .update({
+      'selected_option': callbackData, // Kullanıcının verdiği doğru/yanlış cevabı
+      'timestamp': FieldValue.serverTimestamp(),
+    }).then((_) {
+      setState(() {
+        // UI'daki mesajı güncelle
+        messages = messages.map((message) {
+          if (message['documentId'] == documentId) {
+            message['selected_option'] = callbackData; // Doğru/yanlış cevabı UI'da güncelle
+          }
+          return message;
+        }).toList();
+      });
+
+      // Doğru/yanlış cevabının ardından bot yanıtını al
+      response(callbackData, documentId);
+    }).catchError((error) {
+      print("Cevap güncellenirken hata oluştu: $error");
+    });
+  } 
+  // Eğer callback_data yeni bir işlem (örn: Soy_2) ise yeni belge oluştur
+  else {
+    // Yeni belge oluştur
+    _saveMessageToFirestore({
+      'user_response': '', // Yeni intent ile kullanıcı yanıtı boş kalır
+      'bot_response': callbackData, // Yeni işlem/soru bilgisi
+      'selected_option': '', // Henüz bir cevap yok
+      'sender': 'bot',
+      'timestamp': FieldValue.serverTimestamp(),
+    }).then((newDocumentId) {
+      if (newDocumentId != null) {
+        setState(() {
+          // Yeni mesajı mesajlar listesine ekle
+          messages.insert(0, {
+            'data': 0,
+            'message': callbackData,
+            'documentId': newDocumentId,
+          });
+        });
+
+        // Yeni intent ile bot yanıtını al ve yeni belge üzerinde işlem yap
+        response(callbackData, newDocumentId);
+      }
+    }).catchError((error) {
+      print("Yeni işlem/soru kaydedilirken hata oluştu: $error");
+    });
   }
+}
+
+
 
   // Mesajların gösterileceği widget
   Widget chat(String message, int data, String? imageUrl) {
